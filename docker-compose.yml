@@ -1,0 +1,66 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data/input:/app/data/input
+      - ./data/output:/app/data/output
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - WATCH_DIRECTORY=/app/data/input
+      - DEFAULT_OUTPUT_DIR=/app/data/output
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: celery -A docling_service.tasks worker --loglevel=info --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    volumes:
+      - ./data/input:/app/data/input
+      - ./data/output:/app/data/output
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DEFAULT_OUTPUT_DIR=/app/data/output
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  flower:
+    build: .
+    command: celery -A docling_service.tasks flower --port=5555
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: docling-net
