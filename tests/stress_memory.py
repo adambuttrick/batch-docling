@@ -47,7 +47,7 @@ class MemoryMonitor:
 class StressMemoryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.test_dirs = {"small": Path("test_small"), "medium": Path("test_medium"), "large": Path("test_large")}
+        cls.test_dirs = {"small": Path("tests/sample_pdfs"), "medium": Path("test_medium"), "large": Path("test_large")}
         cls.test_pdfs = {}
         for size, path in cls.test_dirs.items():
             cls.test_pdfs[size] = list(path.glob("*.pdf"))[:3] if path.exists() else []

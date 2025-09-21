@@ -10,7 +10,7 @@ celery:
   audit_delay_seconds: 36
 
 directories:
-  test_small: test_small
+  test_small: tests/sample_pdfs
   test_medium: test_medium
   test_large: test_large
   benchmarks: benchmarks
@@ -43,3 +43,15 @@ daemon:
   processed_dirs_file: .processed_dirs.txt
   daemon_pid_file: daemon.pid
   shutdown_timeout: 30
+
+vlm_fallback:
+  enabled: true
+  queue_name: vlm_pdf
+  model: GRANITE_VISION_TRANSFORMERS
+  worker_concurrency: 1
+  enable_remote_services: false
+  force_backend_text: false
+  images_scale: 2.0
+  generate_page_images: true
+  generate_picture_images: false
+  artifacts_path: null

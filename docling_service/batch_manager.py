@@ -38,9 +38,10 @@ class BatchManager:
             "start_time": None,
             "end_time": None,
             "files": [str(f) for f in pdf_files],
-            "notes": None
+            "notes": None,
+            "fallback_pending": 0
         }
-        
+
         self.redis_client.set(batch_key, json.dumps(batch_metadata))
         return batch_metadata
     
@@ -72,11 +73,34 @@ class BatchManager:
         
         self.redis_client.set(batch_key, json.dumps(batch_data))
         return batch_data
-    
+
+    def increment_fallback_pending(self, batch_id: str) -> Dict[str, Any]:
+        batch_key = self._get_batch_key(batch_id)
+        batch_data = self.get_batch_info(batch_id)
+
+        if not batch_data:
+            raise ValueError(f"Batch {batch_id} not found")
+
+        batch_data["fallback_pending"] = batch_data.get("fallback_pending", 0) + 1
+        self.redis_client.set(batch_key, json.dumps(batch_data))
+        return batch_data
+
+    def decrement_fallback_pending(self, batch_id: str) -> Dict[str, Any]:
+        batch_key = self._get_batch_key(batch_id)
+        batch_data = self.get_batch_info(batch_id)
+
+        if not batch_data:
+            raise ValueError(f"Batch {batch_id} not found")
+
+        fallback_pending = max(batch_data.get("fallback_pending", 0) - 1, 0)
+        batch_data["fallback_pending"] = fallback_pending
+        self.redis_client.set(batch_key, json.dumps(batch_data))
+        return batch_data
+
     def get_batch_info(self, batch_id: str) -> Optional[Dict[str, Any]]:
         batch_key = self._get_batch_key(batch_id)
         batch_json = self.redis_client.get(batch_key)
-        
+
         if not batch_json:
             return None
         
@@ -113,7 +137,7 @@ class BatchManager:
         
         total = batch_data["total_files"]
         completed = batch_data["completed_count"]
-        
+
         progress = {
             "batch_id": batch_id,
             "status": batch_data["status"],
@@ -121,12 +145,13 @@ class BatchManager:
             "completed": completed,
             "total": total,
             "success_count": batch_data["success_count"],
-            "failure_count": batch_data["failure_count"]
+            "failure_count": batch_data["failure_count"],
+            "fallback_pending": batch_data.get("fallback_pending", 0)
         }
-        
+
         if batch_data.get("start_time"):
             progress["elapsed_time"] = time.time() - batch_data["start_time"]
-        
+
         return progress
     
     def cancel_batch(self, batch_id: str) -> None:

@@ -11,7 +11,7 @@ class StressConcurrentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.test_dirs = {
-            "small": Path("test_small"),
+            "small": Path("tests/sample_pdfs"),
             "medium": Path("test_medium"), 
             "large": Path("test_large")
         }
@@ -60,7 +60,7 @@ class StressConcurrentTests(unittest.TestCase):
         
         from benchmarks.benchmark import BenchmarkRunner
         
-        runner = BenchmarkRunner(test_dir="test_small")
+        runner = BenchmarkRunner(test_dir="tests/sample_pdfs")
         
         start_time = time.time()
         results = runner.run_benchmarks()
