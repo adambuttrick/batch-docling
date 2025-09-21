@@ -1,5 +1,6 @@
-import sys
+#!/usr/bin/env python3
 import argparse
+import sys
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent

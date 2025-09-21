@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
         "audit_delay_seconds": 36
     },
     "directories": {
-        "test_small": "tests/sample_pdfs",
+        "test_small": "test_small",
         "test_medium": "test_medium",
         "test_large": "test_large",
         "benchmarks": "benchmarks",
@@ -33,18 +33,6 @@ DEFAULT_CONFIG = {
     "monitoring": {
         "status_check_interval": 2,
         "progress_display_refresh": 0.1
-    },
-    "vlm_fallback": {
-        "enabled": False,
-        "queue_name": "vlm_pdf",
-        "model": "GRANITE_VISION_TRANSFORMERS",
-        "artifacts_path": None,
-        "enable_remote_services": False,
-        "force_backend_text": False,
-        "images_scale": 2.0,
-        "generate_page_images": True,
-        "generate_picture_images": False,
-        "worker_concurrency": 1
     },
     "daemon": {
         "watch_directory": "./data/input",

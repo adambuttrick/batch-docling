@@ -60,29 +60,19 @@ class Config:
             "SCAN_INTERVAL": ("daemon", "scan_interval"),
             "PROCESSED_DIRS_FILE": ("daemon", "processed_dirs_file"),
             "DAEMON_PID_FILE": ("daemon", "daemon_pid_file"),
-            "SHUTDOWN_TIMEOUT": ("daemon", "shutdown_timeout"),
-            "VLM_FALLBACK_ENABLED": ("vlm_fallback", "enabled"),
-            "VLM_QUEUE_NAME": ("vlm_fallback", "queue_name"),
-            "VLM_FALLBACK_MODEL": ("vlm_fallback", "model"),
-            "VLM_ARTIFACTS_PATH": ("vlm_fallback", "artifacts_path"),
-            "VLM_ENABLE_REMOTE_SERVICES": ("vlm_fallback", "enable_remote_services"),
-            "VLM_FORCE_BACKEND_TEXT": ("vlm_fallback", "force_backend_text"),
-            "VLM_IMAGES_SCALE": ("vlm_fallback", "images_scale"),
-            "VLM_GENERATE_PAGE_IMAGES": ("vlm_fallback", "generate_page_images"),
-            "VLM_GENERATE_PICTURE_IMAGES": ("vlm_fallback", "generate_picture_images"),
-            "VLM_WORKER_CONCURRENCY": ("vlm_fallback", "worker_concurrency"),
+            "SHUTDOWN_TIMEOUT": ("daemon", "shutdown_timeout")
         }
-
+        
         for env_var, (section, key) in env_mappings.items():
             value = os.environ.get(env_var)
             if value is not None:
                 try:
                     if key in ["task_soft_time_limit", "task_time_limit", "worker_max_tasks_per_child", 
-                              "worker_prefetch_multiplier", "audit_delay_seconds", "status_check_interval", "scan_interval", "shutdown_timeout", "worker_concurrency"]:
+                              "worker_prefetch_multiplier", "audit_delay_seconds", "status_check_interval", "scan_interval", "shutdown_timeout"]:
                         config[section][key] = int(value)
-                    elif key in ["threshold_percent", "images_scale"]:
+                    elif key in ["threshold_percent"]:
                         config[section][key] = float(value)
-                    elif key in ["task_acks_late", "fail_on_regression", "enabled", "enable_remote_services", "force_backend_text", "generate_page_images", "generate_picture_images"]:
+                    elif key in ["task_acks_late", "fail_on_regression"]:
                         config[section][key] = value.lower() in ('true', '1', 'yes', 'on')
                     else:
                         config[section][key] = value

@@ -23,24 +23,6 @@ is_running() {
     pgrep -f "$1" > /dev/null 2>&1
 }
 
-source .venv/bin/activate
-
-VLM_SETTINGS=$(python - <<'PY'
-from docling_service.config import Config
-
-cfg = Config("config.local.yaml")
-vlm_cfg = cfg.get_section("vlm_fallback") or {}
-enabled = int(bool(vlm_cfg.get("enabled", False)))
-queue_name = vlm_cfg.get("queue_name", "vlm_pdf")
-concurrency = int(vlm_cfg.get("worker_concurrency", 1) or 1)
-print(f"{enabled}:{queue_name}:{concurrency}")
-PY
-)
-
-OLD_IFS="$IFS"
-IFS=':' read -r VLM_ENABLED_INT VLM_QUEUE_NAME VLM_CONCURRENCY <<< "$VLM_SETTINGS"
-IFS="$OLD_IFS"
-
 # Start Redis if not running
 if redis-cli ping > /dev/null 2>&1; then
     echo "Redis is already running"
@@ -65,6 +47,7 @@ fi
 
 # Start Celery worker with reduced concurrency for macOS
 echo "Starting Celery worker (concurrency=4)..."
+source .venv/bin/activate
 celery -A docling_service.celery_app worker --loglevel=info --concurrency=4 --detach
 sleep 3
 
@@ -75,28 +58,17 @@ else
     exit 1
 fi
 
-if [ "$VLM_ENABLED_INT" -eq 1 ]; then
-    echo "Starting VLM Celery worker (queue=${VLM_QUEUE_NAME}, concurrency=${VLM_CONCURRENCY})..."
-    celery -A docling_service.celery_app worker --loglevel=info --concurrency="${VLM_CONCURRENCY}" -Q "${VLM_QUEUE_NAME}" --detach
-    sleep 3
-
-    if is_running "celery.*${VLM_QUEUE_NAME}"; then
-        echo "VLM Celery worker started successfully"
-    else
-        echo "Failed to start VLM Celery worker"
-        exit 1
-    fi
-fi
-
 # Stop any existing daemon
 if [ -f "daemon.pid" ]; then
     echo "Stopping existing daemon..."
+    source .venv/bin/activate
     python -m docling_service.daemon stop
     sleep 2
 fi
 
 # Start the daemon
 echo "Starting daemon with config.local.yaml..."
+source .venv/bin/activate
 python -m docling_service.daemon start config.local.yaml &
 sleep 3
 

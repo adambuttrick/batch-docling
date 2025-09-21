@@ -64,14 +64,6 @@ celery -A docling_service.celery_app worker --loglevel=info --concurrency=4
 
 Note: Default concurrency (16) can result in `XPC_ERROR_CONNECTION_INVALID` errors on macOS when using PyTorch with Metal acceleration. Use `--concurrency=4` or lower to prevent.
 
-If VLM fallback is enabled in your config, start the dedicated worker and point it at the fallback queue (defaults to `vlm_pdf`):
-
-```bash
-celery -A docling_service.celery_app worker --loglevel=info --concurrency=1 -Q vlm_pdf
-```
-
-Increase `--concurrency` if you have sufficient GPU/CPU capacity for VLM models.
-
 ### Step 3: Start the Daemon
 ```bash
 source .venv/bin/activate
@@ -164,7 +156,6 @@ The `config.local.yaml` file contains settings optimized for local development:
 - Input directory: `./data/input`
 - Output directory: `./data/output`
 - Timeouts suitable for local processing
-- VLM fallback (optional): configure under `vlm_fallback` with `enabled`, `queue_name`, `model`, and `worker_concurrency`
 
 ## Troubleshooting
 
