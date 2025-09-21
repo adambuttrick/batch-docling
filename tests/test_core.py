@@ -449,6 +449,22 @@ class TestRegressionDetection(unittest.TestCase):
         self.assertFalse(detector.is_metric_regression("pages_per_second", 9.5, 10))
 
 
+class TestVlmAutoSelection(unittest.TestCase):
+    def test_granite_uses_mlx_on_mac(self):
+        from docling_service import tasks as tasks_module
+
+        with patch.dict('sys.modules', {'mlx_vlm': MagicMock()}), \
+             patch('docling_service.tasks.sys.platform', 'darwin'), \
+             patch('docling_service.tasks.get_vlm_config', return_value={'model': 'GRANITE_VISION_TRANSFORMERS', 'granite_mlx_repo': 'ibm-granite/vision-mlx-test'}), \
+             patch('docling_service.tasks._get_accelerator_options') as mock_accel:
+            mock_accel.return_value = MagicMock()
+            tasks_module._ACCELERATOR_CFG_CACHE.clear()
+            tasks_module._detect_accelerator.cache_clear()
+            options = tasks_module._build_vlm_pipeline_options()
+            self.assertEqual(options.vlm_options.repo_id, 'ibm-granite/vision-mlx-test')
+            self.assertEqual(options.vlm_options.inference_framework, tasks_module.InferenceFramework.MLX)
+
+
 def run_core_tests():
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()

@@ -13,7 +13,10 @@ from docling.datamodel.pipeline_options import (
     TesseractCliOcrOptions,
     VlmPipelineOptions,
 )
-from docling.datamodel.accelerator_options import AcceleratorOptions
+from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
+from docling.datamodel.pipeline_options_vlm_model import InlineVlmOptions, InferenceFramework, ResponseFormat
+
+import sys
 
 from .batch_manager import BatchStates, get_batch_manager
 from .celery_app import celery_app
@@ -122,6 +125,29 @@ def _load_vlm_model_specs():
     return importlib.import_module("docling.datamodel.vlm_model_specs")
 
 
+def _get_granite_mlx_spec():
+    specs = _load_vlm_model_specs()
+    if hasattr(specs, "GRANITE_VISION_MLX"):
+        return getattr(specs, "GRANITE_VISION_MLX")
+
+    vlm_cfg = get_vlm_config()
+    repo = vlm_cfg.get("granite_mlx_repo")
+    if not repo:
+        logger.debug("Granite MLX repo not configured; keeping default model")
+        return None
+
+    logger.info("Constructing Granite Vision MLX spec for repo %s", repo)
+    return InlineVlmOptions(
+        repo_id=repo,
+        prompt="Convert this page to markdown. Do not miss any text and only output the bare markdown!",
+        response_format=ResponseFormat.MARKDOWN,
+        inference_framework=InferenceFramework.MLX,
+        supported_devices=[AcceleratorDevice.MPS],
+        scale=2.0,
+        temperature=0.0,
+    )
+
+
 def _resolve_vlm_model_option(model_name: Optional[str]):
     default_name = "GRANITE_VISION_TRANSFORMERS"
     if not model_name:
@@ -144,6 +170,31 @@ def _resolve_vlm_model_option(model_name: Optional[str]):
         default_name,
     )
     return getattr(vlm_model_specs, default_name)
+
+
+def _maybe_override_vlm_model(pipeline_options: VlmPipelineOptions) -> None:
+    """Auto-select MLX variant of Granite Vision when available."""
+    vlm_config = get_vlm_config()
+    requested_model = (vlm_config.get("model") or "").lower()
+    if requested_model and requested_model not in {"granite_vision", "granite_vision_transformers"}:
+        return
+
+    if (platform := sys.platform) != "darwin":
+        return
+
+    try:
+        import mlx_vlm  # noqa: F401  # pragma: no cover - only for detection
+    except Exception:
+        logger.debug("MLX VLM package not available; keeping default Granite model")
+        return
+
+    mlx_spec = _get_granite_mlx_spec()
+    if mlx_spec is None:
+        logger.debug("Granite MLX spec not found; keeping default model")
+        return
+
+    logger.info("Auto-selecting Granite Vision MLX model for VLM pipeline")
+    pipeline_options.vlm_options = mlx_spec
 
 
 def get_vlm_config() -> Dict[str, Any]:
@@ -269,6 +320,7 @@ def _build_vlm_pipeline_options() -> VlmPipelineOptions:
 
     pipeline_options.vlm_options = _resolve_vlm_model_option(vlm_config.get("model"))
 
+    _maybe_override_vlm_model(pipeline_options)
     return pipeline_options
 
 

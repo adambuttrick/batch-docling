@@ -66,6 +66,7 @@ vlm_fallback:
   queue_name: vlm_pdf
   model: GRANITE_VISION_TRANSFORMERS
   primary_mode: standard
+  granite_mlx_repo: ibm-granite/granite-vision-3.2-2b-mlx
   worker_concurrency: 1
   enable_remote_services: false
   force_backend_text: false

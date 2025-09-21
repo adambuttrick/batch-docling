@@ -59,6 +59,7 @@ DEFAULT_CONFIG = {
         "queue_name": "vlm_pdf",
         "model": "GRANITE_VISION_TRANSFORMERS",
         "primary_mode": "standard",
+        "granite_mlx_repo": "ibm-granite/granite-vision-3.2-2b-mlx",
         "artifacts_path": None,
         "enable_remote_services": False,
         "force_backend_text": False,
