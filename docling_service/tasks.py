@@ -2,6 +2,7 @@ import os
 import logging
 import tempfile
 import time
+from functools import lru_cache
 from typing import Any, Dict, Optional
 
 import fitz
@@ -12,6 +13,7 @@ from docling.datamodel.pipeline_options import (
     TesseractCliOcrOptions,
     VlmPipelineOptions,
 )
+from docling.datamodel.accelerator_options import AcceleratorOptions
 
 from .batch_manager import BatchStates, get_batch_manager
 from .celery_app import celery_app
@@ -80,7 +82,9 @@ class PdfFormatOption:
 
 
 def _build_standard_pdf_pipeline_options() -> PdfPipelineOptions:
+    accelerator_options = _get_accelerator_options(PRIMARY_MODE_STANDARD)
     return PdfPipelineOptions(
+        accelerator_options=accelerator_options,
         do_ocr=True,
         ocr_options=TesseractCliOcrOptions(lang=['eng']),
         do_table_structure=False,
@@ -241,8 +245,11 @@ def _get_queue_name(request) -> str:
 def _build_vlm_pipeline_options() -> VlmPipelineOptions:
     vlm_config = get_vlm_config()
 
+    accelerator_options = _get_accelerator_options(PRIMARY_MODE_VLM)
+
     pipeline_options = VlmPipelineOptions(
         enable_remote_services=vlm_config.get("enable_remote_services", False),
+        accelerator_options=accelerator_options,
     )
 
     pipeline_options.force_backend_text = vlm_config.get("force_backend_text", False)
@@ -705,3 +712,47 @@ def audit_batch_status(batch_id: str):
     if reschedule and poll_seconds > 0:
         logger.info("[Audit] Rescheduling audit for batch %s in %ss", batch_id, poll_seconds)
         audit_batch_status.apply_async(args=[batch_id], countdown=poll_seconds)
+_ACCELERATOR_CFG_CACHE: Dict[str, AcceleratorOptions] = {}
+
+
+def _get_accelerator_config() -> Dict[str, Any]:
+    config = get_config()
+    return config.get_section("accelerator") or {}
+
+
+@lru_cache(maxsize=None)
+def _detect_accelerator(prefer_mps: bool, prefer_cuda: bool) -> str:
+    try:
+        import torch  # type: ignore
+
+        if prefer_mps and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("Auto-selected MPS accelerator")
+            return "mps"
+        if prefer_cuda and torch.cuda.is_available():
+            logger.info("Auto-selected CUDA accelerator")
+            return "cuda"
+    except Exception as exc:  # pragma: no cover - best effort detection
+        logger.debug("Accelerator auto-detect failed, falling back to CPU: %s", exc)
+    return "cpu"
+
+
+def _get_accelerator_options(mode: str) -> AcceleratorOptions:
+    cache_key = f"{mode}"
+    if cache_key in _ACCELERATOR_CFG_CACHE:
+        return _ACCELERATOR_CFG_CACHE[cache_key]
+
+    acc_cfg = _get_accelerator_config()
+    device_key = "vlm_device" if mode == PRIMARY_MODE_VLM else "standard_device"
+    desired_device = str(acc_cfg.get(device_key, "auto")).lower()
+    prefer_mps = bool(acc_cfg.get("prefer_mps", True))
+    prefer_cuda = bool(acc_cfg.get("prefer_cuda", True))
+    num_threads = int(acc_cfg.get("num_threads", 4))
+
+    if desired_device != "auto":
+        resolved_device = desired_device
+    else:
+        resolved_device = _detect_accelerator(prefer_mps, prefer_cuda)
+
+    options = AcceleratorOptions(num_threads=num_threads, device=resolved_device)
+    _ACCELERATOR_CFG_CACHE[cache_key] = options
+    return options

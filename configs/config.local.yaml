@@ -46,6 +46,13 @@ monitoring:
       hard_seconds: 3600
       max_retries: 1
 
+accelerator:
+  standard_device: auto
+  vlm_device: auto
+  prefer_mps: true
+  prefer_cuda: true
+  num_threads: 4
+
 daemon:
   watch_directory: ./data/input
   output_base_dir: ./data/output

@@ -78,6 +78,10 @@ The fallback worker listens on `vlm_fallback.queue_name` (default `vlm_pdf`) and
 - `VLM_WORKER_CONCURRENCY`: Concurrency for the VLM worker processes
 - `VLM_ARTIFACTS_PATH`: Optional local path with pre-downloaded models
 - `VLM_PRIMARY_MODE`: `standard` or `vlm` to control which pipeline runs first
+- `ACCELERATOR_STANDARD_DEVICE`: Force accelerator for the standard pipeline (`auto`, `cpu`, `mps`, `cuda`)
+- `ACCELERATOR_VLM_DEVICE`: Force accelerator for the VLM pipeline
+- `ACCELERATOR_PREFER_MPS` / `ACCELERATOR_PREFER_CUDA`: Hints for auto-detection when `device` is `auto`
+- `ACCELERATOR_NUM_THREADS`: Override thread count for CPU execution
 
 ## Example config.yaml
 
@@ -96,4 +100,11 @@ vlm_fallback:
   model: "GRANITE_VISION_TRANSFORMERS"
   primary_mode: standard
   worker_concurrency: 1
+
+accelerator:
+  standard_device: auto
+  vlm_device: auto
+  prefer_mps: true
+  prefer_cuda: true
+  num_threads: 4
 ```

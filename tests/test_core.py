@@ -97,6 +97,9 @@ class TestVlmFallback(unittest.TestCase):
         if not self.image_pdf.exists():
             self.skipTest("Image-only sample PDF missing")
         self.temp_dir = tempfile.mkdtemp()
+        from docling_service import tasks as tasks_module
+        tasks_module._ACCELERATOR_CFG_CACHE.clear()
+        tasks_module._detect_accelerator.cache_clear()
 
     def tearDown(self):
         if hasattr(self, "temp_dir") and os.path.exists(self.temp_dir):
@@ -107,7 +110,20 @@ class TestVlmFallback(unittest.TestCase):
 
         mock_config = MagicMock()
         vlm_cfg = {"enabled": False}
-        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else {}
+        accelerator_cfg = {
+            "standard_device": "cpu",
+            "vlm_device": "cpu",
+            "prefer_mps": False,
+            "prefer_cuda": False,
+            "num_threads": 1,
+        }
+        def _section(section):
+            if section == "vlm_fallback":
+                return vlm_cfg
+            if section == "accelerator":
+                return accelerator_cfg
+            return {}
+        mock_config.get_section.side_effect = _section
 
         with patch("docling_service.tasks.get_config", return_value=mock_config):
             result = schedule_vlm_fallback(
@@ -147,8 +163,24 @@ class TestVlmFallback(unittest.TestCase):
             "queue_name": "vlm_pdf",
             "primary_mode": "standard",
         }
+        accelerator_cfg = {
+            "standard_device": "cpu",
+            "vlm_device": "cpu",
+            "prefer_mps": False,
+            "prefer_cuda": False,
+            "num_threads": 1,
+        }
 
-        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+        def _section(section):
+            if section == "vlm_fallback":
+                return vlm_cfg
+            if section == "monitoring":
+                return monitoring_cfg
+            if section == "accelerator":
+                return accelerator_cfg
+            return {}
+
+        mock_config.get_section.side_effect = _section
 
         with patch("docling_service.tasks.get_config", return_value=mock_config):
             result = schedule_vlm_fallback(
@@ -192,8 +224,24 @@ class TestVlmFallback(unittest.TestCase):
             "queue_name": "vlm_pdf",
             "primary_mode": "vlm",
         }
+        accelerator_cfg = {
+            "standard_device": "cpu",
+            "vlm_device": "cpu",
+            "prefer_mps": False,
+            "prefer_cuda": False,
+            "num_threads": 1,
+        }
 
-        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+        def _section(section):
+            if section == "vlm_fallback":
+                return vlm_cfg
+            if section == "monitoring":
+                return monitoring_cfg
+            if section == "accelerator":
+                return accelerator_cfg
+            return {}
+
+        mock_config.get_section.side_effect = _section
 
         with patch("docling_service.tasks.get_config", return_value=mock_config):
             result = schedule_standard_fallback(
@@ -245,7 +293,22 @@ class TestVlmFallback(unittest.TestCase):
             "queue_name": "vlm_pdf",
             "primary_mode": "standard",
         }
-        config_mock.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+        accelerator_cfg = {
+            "standard_device": "cpu",
+            "vlm_device": "cpu",
+            "prefer_mps": False,
+            "prefer_cuda": False,
+            "num_threads": 1,
+        }
+        def _section(section):
+            if section == "vlm_fallback":
+                return vlm_cfg
+            if section == "monitoring":
+                return monitoring_cfg
+            if section == "accelerator":
+                return accelerator_cfg
+            return {}
+        config_mock.get_section.side_effect = _section
         mock_get_config.return_value = config_mock
 
         batch_manager = MagicMock()
@@ -306,7 +369,22 @@ class TestVlmFallback(unittest.TestCase):
             "queue_name": "vlm_pdf",
             "primary_mode": "vlm",
         }
-        config_mock.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+        accelerator_cfg = {
+            "standard_device": "cpu",
+            "vlm_device": "cpu",
+            "prefer_mps": False,
+            "prefer_cuda": False,
+            "num_threads": 1,
+        }
+        def _section(section):
+            if section == "vlm_fallback":
+                return vlm_cfg
+            if section == "monitoring":
+                return monitoring_cfg
+            if section == "accelerator":
+                return accelerator_cfg
+            return {}
+        config_mock.get_section.side_effect = _section
         mock_get_config.return_value = config_mock
 
         batch_manager = MagicMock()

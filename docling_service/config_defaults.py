@@ -47,6 +47,13 @@ DEFAULT_CONFIG = {
             }
         }
     },
+    "accelerator": {
+        "standard_device": "auto",
+        "vlm_device": "auto",
+        "prefer_mps": True,
+        "prefer_cuda": True,
+        "num_threads": 4
+    },
     "vlm_fallback": {
         "enabled": False,
         "queue_name": "vlm_pdf",

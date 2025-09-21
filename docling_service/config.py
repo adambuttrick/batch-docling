@@ -72,6 +72,11 @@ class Config:
             "VLM_GENERATE_PICTURE_IMAGES": ("vlm_fallback", "generate_picture_images"),
             "VLM_WORKER_CONCURRENCY": ("vlm_fallback", "worker_concurrency"),
             "VLM_PRIMARY_MODE": ("vlm_fallback", "primary_mode"),
+            "ACCELERATOR_STANDARD_DEVICE": ("accelerator", "standard_device"),
+            "ACCELERATOR_VLM_DEVICE": ("accelerator", "vlm_device"),
+            "ACCELERATOR_PREFER_MPS": ("accelerator", "prefer_mps"),
+            "ACCELERATOR_PREFER_CUDA": ("accelerator", "prefer_cuda"),
+            "ACCELERATOR_NUM_THREADS": ("accelerator", "num_threads"),
         }
 
         for env_var, (section, key) in env_mappings.items():
@@ -79,11 +84,11 @@ class Config:
             if value is not None:
                 try:
                     if key in ["task_soft_time_limit", "task_time_limit", "worker_max_tasks_per_child", 
-                              "worker_prefetch_multiplier", "audit_delay_seconds", "status_check_interval", "scan_interval", "shutdown_timeout", "worker_concurrency"]:
+                              "worker_prefetch_multiplier", "audit_delay_seconds", "status_check_interval", "scan_interval", "shutdown_timeout", "worker_concurrency", "num_threads"]:
                         config[section][key] = int(value)
                     elif key in ["threshold_percent", "images_scale"]:
                         config[section][key] = float(value)
-                    elif key in ["task_acks_late", "fail_on_regression", "enabled", "enable_remote_services", "force_backend_text", "generate_page_images", "generate_picture_images"]:
+                    elif key in ["task_acks_late", "fail_on_regression", "enabled", "enable_remote_services", "force_backend_text", "generate_page_images", "generate_picture_images", "prefer_mps", "prefer_cuda"]:
                         config[section][key] = value.lower() in ('true', '1', 'yes', 'on')
                     else:
                         config[section][key] = value
