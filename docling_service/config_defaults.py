@@ -32,7 +32,20 @@ DEFAULT_CONFIG = {
     },
     "monitoring": {
         "status_check_interval": 2,
-        "progress_display_refresh": 0.1
+        "progress_display_refresh": 0.1,
+        "monitor_poll_seconds": 120,
+        "task_timeout_profiles": {
+            "standard": {
+                "soft_seconds": 600,
+                "hard_seconds": 1200,
+                "max_retries": 1
+            },
+            "vlm": {
+                "soft_seconds": 1800,
+                "hard_seconds": 3600,
+                "max_retries": 1
+            }
+        }
     },
     "vlm_fallback": {
         "enabled": False,

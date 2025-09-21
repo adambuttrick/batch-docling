@@ -1,6 +1,7 @@
 import os
 import logging
 import tempfile
+import time
 from typing import Any, Dict, Optional
 
 import fitz
@@ -16,7 +17,6 @@ from .batch_manager import BatchStates, get_batch_manager
 from .celery_app import celery_app
 from .config import get_config
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PRIMARY_MODE_STANDARD = "standard"
@@ -29,8 +29,9 @@ def sanitize_pdf(source_path: str) -> (str, int, int):
     try:
         original_doc = fitz.open(source_path)
     except Exception as e:
-        logger.error(f"Failed to open PDF '{source_path}' with PyMuPDF: {e}")
+        logger.error("Failed to open PDF '%s' with PyMuPDF: %s", source_path, e)
         raise
+
     sanitized_doc = fitz.open()
     for i, page in enumerate(original_doc):
         try:
@@ -39,15 +40,28 @@ def sanitize_pdf(source_path: str) -> (str, int, int):
                 sanitized_doc.insert_pdf(original_doc, from_page=i, to_page=i)
                 kept_pages += 1
             else:
-                logger.warning(f"Skipping invalid page {i+1} in '{source_path}' (dimensions: {pix.width}x{pix.height})")
+                logger.warning(
+                    "Skipping invalid page %s in '%s' (dimensions: %sx%s)",
+                    i + 1,
+                    source_path,
+                    pix.width,
+                    pix.height,
+                )
                 skipped_pages += 1
         except Exception as e:
-            logger.warning(f"Could not process or render page {i+1} in '{source_path}': {e}")
+            logger.warning(
+                "Could not process or render page %s in '%s': %s",
+                i + 1,
+                source_path,
+                e,
+            )
             skipped_pages += 1
+
     if kept_pages == 0:
         original_doc.close()
         sanitized_doc.close()
         raise ValueError(f"No valid pages found in '{source_path}' after sanitization.")
+
     temp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     sanitized_doc.save(temp_file.name)
     original_doc.close()
@@ -128,8 +142,104 @@ def _resolve_vlm_model_option(model_name: Optional[str]):
     return getattr(vlm_model_specs, default_name)
 
 
+def get_vlm_config() -> Dict[str, Any]:
+    config = get_config()
+    return config.get_section("vlm_fallback") or {}
+
+
+def get_primary_mode(vlm_config: Dict[str, Any]) -> str:
+    mode = (vlm_config.get("primary_mode") or PRIMARY_MODE_STANDARD).strip().lower()
+    if mode not in {PRIMARY_MODE_STANDARD, PRIMARY_MODE_VLM}:
+        logger.warning("Unknown primary mode '%s'; defaulting to '%s'", mode, PRIMARY_MODE_STANDARD)
+        return PRIMARY_MODE_STANDARD
+    return mode
+
+
+def _is_fallback_enabled(vlm_config: Dict[str, Any]) -> bool:
+    return bool(vlm_config.get("enabled", False))
+
+
+def _get_monitoring_config() -> Dict[str, Any]:
+    config = get_config()
+    return config.get_section("monitoring") or {}
+
+
+def _get_timeout_profile(mode: str) -> Dict[str, int]:
+    monitoring = _get_monitoring_config()
+    profiles = monitoring.get("task_timeout_profiles", {}) or {}
+    profile = profiles.get(mode) or profiles.get(PRIMARY_MODE_STANDARD, {})
+
+    def _to_int(val, default):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
+    soft = _to_int(profile.get("soft_seconds"), 600 if mode == PRIMARY_MODE_STANDARD else 1800)
+    hard = _to_int(profile.get("hard_seconds"), max(soft * 2, soft + 600))
+    max_retries = _to_int(profile.get("max_retries"), 0)
+    return {
+        "soft_seconds": soft,
+        "hard_seconds": hard,
+        "max_retries": max_retries,
+    }
+
+
+def _can_retry(mode: str, attempt: int) -> bool:
+    profile = _get_timeout_profile(mode)
+    max_retries = profile.get("max_retries", 0)
+    return (attempt - 1) < max_retries
+
+
+def _record_task_start(
+    batch_id: str,
+    task_id: str,
+    source_path: str,
+    output_dir: str,
+    mode: str,
+    queue: str,
+    attempt: int,
+    parent_task_id: Optional[str] = None,
+):
+    batch_manager = get_batch_manager()
+    metadata = {
+        "task_id": task_id,
+        "batch_id": batch_id,
+        "source_path": source_path,
+        "output_dir": output_dir,
+        "mode": mode,
+        "queue": queue,
+        "attempt": attempt,
+        "started_at": time.time(),
+    }
+    if parent_task_id:
+        metadata["parent_task_id"] = parent_task_id
+    batch_manager.record_task_start(batch_id, task_id, metadata)
+
+
+def _clear_task_metadata(batch_id: str, task_id: str):
+    batch_manager = get_batch_manager()
+    batch_manager.remove_task_metadata(batch_id, task_id)
+
+
+def _extract_task_headers(request) -> (int, Optional[str]):
+    headers = getattr(request, "headers", {}) or {}
+    attempt = headers.get("attempt", 1)
+    try:
+        attempt = int(attempt)
+    except (TypeError, ValueError):
+        attempt = 1
+    parent_task_id = headers.get("parent_task_id")
+    return attempt, parent_task_id
+
+
+def _get_queue_name(request) -> str:
+    delivery_info = getattr(request, "delivery_info", {}) or {}
+    return delivery_info.get("routing_key") or "celery"
+
+
 def _build_vlm_pipeline_options() -> VlmPipelineOptions:
-    vlm_config = _get_vlm_config()
+    vlm_config = get_vlm_config()
 
     pipeline_options = VlmPipelineOptions(
         enable_remote_services=vlm_config.get("enable_remote_services", False),
@@ -161,23 +271,6 @@ def _get_vlm_pipeline_cls():
     return VlmPipeline
 
 
-def _get_vlm_config() -> Dict[str, Any]:
-    config = get_config()
-    return config.get_section("vlm_fallback") or {}
-
-
-def _get_primary_mode(vlm_config: Dict[str, Any]) -> str:
-    mode = (vlm_config.get("primary_mode") or PRIMARY_MODE_STANDARD).strip().lower()
-    if mode not in {PRIMARY_MODE_STANDARD, PRIMARY_MODE_VLM}:
-        logger.warning("Unknown primary mode '%s'; defaulting to '%s'", mode, PRIMARY_MODE_STANDARD)
-        return PRIMARY_MODE_STANDARD
-    return mode
-
-
-def _is_fallback_enabled(vlm_config: Dict[str, Any]) -> bool:
-    return bool(vlm_config.get("enabled", False))
-
-
 def _process_pdf_logic(
     source_path: str,
     output_dir: str,
@@ -196,7 +289,7 @@ def _process_pdf_logic(
             task_id,
         )
         sanitized_pdf_path, kept, skipped = sanitize_pdf(source_path)
-        logger.info(f"Sanitized '{source_path}': {kept} pages kept, {skipped} pages skipped.")
+        logger.info("Sanitized '%s': %s pages kept, %s pages skipped.", source_path, kept, skipped)
 
         if use_vlm:
             pipeline_options = _build_vlm_pipeline_options()
@@ -224,12 +317,12 @@ def _process_pdf_logic(
             f.write(markdown_output)
         logger.info("Successfully processed and saved: %s [%s mode]", output_path, mode)
         return {
-            'status': 'SUCCESS',
-            'input_file': source_path,
-            'output_file': output_path,
-            'pages_kept': kept,
-            'pages_skipped': skipped,
-            'mode': mode,
+            "status": "SUCCESS",
+            "input_file": source_path,
+            "output_file": output_path,
+            "pages_kept": kept,
+            "pages_skipped": skipped,
+            "mode": mode,
         }
     except Exception as e:
         logger.error(
@@ -248,33 +341,43 @@ def _process_pdf_logic(
 def _update_batch_state(batch_manager, batch_id: str, source_path: str, success: bool):
     batch_info = batch_manager.get_batch_info(batch_id)
     if batch_info and batch_info.get("status") not in [BatchStates.COMPLETED, BatchStates.CANCELLED]:
-        batch_data = batch_manager.increment_completed(
-            batch_id, success=success)
+        batch_data = batch_manager.increment_completed(batch_id, success=success)
         if batch_data and batch_data["completed_count"] >= batch_data["total_files"]:
             batch_manager.finalize_batch(batch_id)
     else:
         status = "finished" if success else "failed"
-        logger.warning(f"Task for '{source_path}' {status} after batch {batch_id} was already finalized. Ignoring result.")
+        logger.warning(
+            "Task for '%s' %s after batch %s was already finalized. Ignoring result.",
+            source_path,
+            status,
+            batch_id,
+        )
 
 
-def _maybe_schedule_vlm_fallback(
+def schedule_vlm_fallback(
     batch_manager,
     source_path: str,
     output_dir: str,
     batch_id: str,
     error: Exception,
+    attempt: int,
+    parent_task_id: str,
+    vlm_config: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    vlm_config = _get_vlm_config()
-
     if not _is_fallback_enabled(vlm_config):
         return None
 
+    if not _can_retry(PRIMARY_MODE_STANDARD, attempt):
+        return None
+
     queue_name = vlm_config.get("queue_name", "vlm_pdf")
+    headers = {"attempt": attempt + 1, "parent_task_id": parent_task_id}
 
     try:
         fallback_task = process_pdf_vlm.apply_async(
             args=[source_path, output_dir, batch_id],
             queue=queue_name,
+            headers=headers,
         )
     except Exception as dispatch_error:
         logger.error(
@@ -287,9 +390,6 @@ def _maybe_schedule_vlm_fallback(
 
     batch_manager.add_task_to_batch(batch_id, fallback_task.id)
     batch_manager.increment_fallback_pending(batch_id)
-
-    batch_info = batch_manager.get_batch_info(batch_id) or {}
-    fallback_pending = batch_info.get("fallback_pending", 0)
 
     logger.info(
         "Scheduled VLM fallback task %s for %s on queue '%s'",
@@ -304,25 +404,31 @@ def _maybe_schedule_vlm_fallback(
         "original_error": str(error),
         "fallback_task_id": fallback_task.id,
         "fallback_queue": queue_name,
-        "fallback_pending": fallback_pending,
     }
 
 
-def _maybe_schedule_standard_fallback(
+def schedule_standard_fallback(
     batch_manager,
     source_path: str,
     output_dir: str,
     batch_id: str,
     error: Exception,
+    attempt: int,
+    parent_task_id: str,
+    vlm_config: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    vlm_config = _get_vlm_config()
-
     if not _is_fallback_enabled(vlm_config):
         return None
 
+    if not _can_retry(PRIMARY_MODE_VLM, attempt):
+        return None
+
+    headers = {"attempt": attempt + 1, "parent_task_id": parent_task_id}
+
     try:
         fallback_task = process_pdf_standard.apply_async(
-            args=[source_path, output_dir, batch_id]
+            args=[source_path, output_dir, batch_id],
+            headers=headers,
         )
     except Exception as dispatch_error:
         logger.error(
@@ -336,9 +442,6 @@ def _maybe_schedule_standard_fallback(
     batch_manager.add_task_to_batch(batch_id, fallback_task.id)
     batch_manager.increment_fallback_pending(batch_id)
 
-    batch_info = batch_manager.get_batch_info(batch_id) or {}
-    fallback_pending = batch_info.get("fallback_pending", 0)
-
     logger.info(
         "Scheduled standard fallback task %s for %s on default queue",
         fallback_task.id,
@@ -351,50 +454,68 @@ def _maybe_schedule_standard_fallback(
         "original_error": str(error),
         "fallback_task_id": fallback_task.id,
         "fallback_queue": "celery",
-        "fallback_pending": fallback_pending,
     }
 
 
 @celery_app.task(name='tasks.process_pdf', bind=True)
 def process_pdf(self, source_path: str, output_dir: str, batch_id: str):
     batch_manager = get_batch_manager()
-    vlm_config = _get_vlm_config()
-    primary_mode = _get_primary_mode(vlm_config)
+    vlm_config = get_vlm_config()
+    primary_mode = get_primary_mode(vlm_config)
     use_vlm_primary = primary_mode == PRIMARY_MODE_VLM
+
+    attempt, parent_task_id = _extract_task_headers(self.request)
+    queue_name = _get_queue_name(self.request)
+    mode = PRIMARY_MODE_VLM if use_vlm_primary else PRIMARY_MODE_STANDARD
+    task_id = self.request.id
+
+    _record_task_start(
+        batch_id=batch_id,
+        task_id=task_id,
+        source_path=source_path,
+        output_dir=output_dir,
+        mode=mode,
+        queue=queue_name,
+        attempt=attempt,
+        parent_task_id=parent_task_id,
+    )
+
     try:
         result = _process_pdf_logic(
             source_path,
             output_dir,
             batch_id,
-            self.request.id,
+            task_id,
             use_vlm=use_vlm_primary,
         )
+        _clear_task_metadata(batch_id, task_id)
         _update_batch_state(batch_manager, batch_id, source_path, True)
         return result
     except Exception as e:
-        logger.error(
-            "Initial conversion failed for %s: %s",
-            source_path,
-            e,
-            exc_info=True,
-        )
-        fallback_result = None
+        _clear_task_metadata(batch_id, task_id)
 
+        fallback_result = None
         if use_vlm_primary:
-            fallback_result = _maybe_schedule_standard_fallback(
-                batch_manager=batch_manager,
-                source_path=source_path,
-                output_dir=output_dir,
-                batch_id=batch_id,
-                error=e,
+            fallback_result = schedule_standard_fallback(
+                batch_manager,
+                source_path,
+                output_dir,
+                batch_id,
+                e,
+                attempt,
+                task_id,
+                vlm_config,
             )
         else:
-            fallback_result = _maybe_schedule_vlm_fallback(
-                batch_manager=batch_manager,
-                source_path=source_path,
-                output_dir=output_dir,
-                batch_id=batch_id,
-                error=e,
+            fallback_result = schedule_vlm_fallback(
+                batch_manager,
+                source_path,
+                output_dir,
+                batch_id,
+                e,
+                attempt,
+                task_id,
+                vlm_config,
             )
 
         if fallback_result is not None:
@@ -407,24 +528,35 @@ def process_pdf(self, source_path: str, output_dir: str, batch_id: str):
 @celery_app.task(name='tasks.process_pdf_vlm', bind=True)
 def process_pdf_vlm(self, source_path: str, output_dir: str, batch_id: str):
     batch_manager = get_batch_manager()
+    attempt, parent_task_id = _extract_task_headers(self.request)
+    queue_name = _get_queue_name(self.request)
+    task_id = self.request.id
+
+    _record_task_start(
+        batch_id=batch_id,
+        task_id=task_id,
+        source_path=source_path,
+        output_dir=output_dir,
+        mode=PRIMARY_MODE_VLM,
+        queue=queue_name,
+        attempt=attempt,
+        parent_task_id=parent_task_id,
+    )
+
     try:
         result = _process_pdf_logic(
             source_path,
             output_dir,
             batch_id,
-            self.request.id,
+            task_id,
             use_vlm=True,
         )
+        _clear_task_metadata(batch_id, task_id)
         batch_manager.decrement_fallback_pending(batch_id)
         _update_batch_state(batch_manager, batch_id, source_path, True)
         return result
     except Exception as e:
-        logger.error(
-            "VLM fallback failed for %s: %s",
-            source_path,
-            e,
-            exc_info=True,
-        )
+        _clear_task_metadata(batch_id, task_id)
         batch_manager.decrement_fallback_pending(batch_id)
         _update_batch_state(batch_manager, batch_id, source_path, False)
         raise
@@ -433,24 +565,35 @@ def process_pdf_vlm(self, source_path: str, output_dir: str, batch_id: str):
 @celery_app.task(name='tasks.process_pdf_standard', bind=True)
 def process_pdf_standard(self, source_path: str, output_dir: str, batch_id: str):
     batch_manager = get_batch_manager()
+    attempt, parent_task_id = _extract_task_headers(self.request)
+    queue_name = _get_queue_name(self.request)
+    task_id = self.request.id
+
+    _record_task_start(
+        batch_id=batch_id,
+        task_id=task_id,
+        source_path=source_path,
+        output_dir=output_dir,
+        mode=PRIMARY_MODE_STANDARD,
+        queue=queue_name,
+        attempt=attempt,
+        parent_task_id=parent_task_id,
+    )
+
     try:
         result = _process_pdf_logic(
             source_path,
             output_dir,
             batch_id,
-            self.request.id,
+            task_id,
             use_vlm=False,
         )
+        _clear_task_metadata(batch_id, task_id)
         batch_manager.decrement_fallback_pending(batch_id)
         _update_batch_state(batch_manager, batch_id, source_path, True)
         return result
     except Exception as e:
-        logger.error(
-            "Standard fallback failed for %s: %s",
-            source_path,
-            e,
-            exc_info=True,
-        )
+        _clear_task_metadata(batch_id, task_id)
         batch_manager.decrement_fallback_pending(batch_id)
         _update_batch_state(batch_manager, batch_id, source_path, False)
         raise
@@ -461,25 +604,104 @@ def audit_batch_status(batch_id: str):
     batch_manager = get_batch_manager()
     batch_info = batch_manager.get_batch_info(batch_id)
     if not batch_info:
-        logger.warning(f"[Audit] Batch {batch_id} not found. Nothing to do.")
+        logger.warning("[Audit] Batch %s not found. Nothing to do.", batch_id)
         return
+
     if batch_info.get("status") in [BatchStates.COMPLETED, BatchStates.CANCELLED]:
-        logger.info(f"[Audit] Batch {batch_id} already finalized. Nothing to do.")
+        logger.info("[Audit] Batch %s already finalized. Nothing to do.", batch_id)
         return
-    if batch_info.get("fallback_pending", 0):
-        pending = batch_info.get("fallback_pending", 0)
-        logger.info(
-            "[Audit] Batch %s has %s fallback task(s) pending; postponing audit finalization.",
-            batch_id,
-            pending,
-        )
-        return f"Batch {batch_id} waiting on {pending} fallback task(s)."
-    total_files = batch_info.get("total_files", 0)
-    completed_count = batch_info.get("completed_count", 0)
-    if completed_count < total_files:
-        lost_tasks = total_files - completed_count
-        notes = f"Auditor marked {lost_tasks} task(s) as lost due to timeout or crash."
-        logger.warning(f"[Audit] Batch {batch_id} is stuck at {completed_count}/{total_files}. Finalizing.")
-        batch_manager.finalize_batch(batch_id, notes)
-        return f"Batch {batch_id} was stuck and has been finalized by the auditor."
-    return f"Batch {batch_id} completed normally."
+
+    active_metadata = batch_manager.get_active_task_metadata(batch_id)
+    if not active_metadata:
+        logger.info("[Audit] Batch %s has no active tasks. Nothing to do.", batch_id)
+        return
+
+    monitoring = _get_monitoring_config()
+    poll_seconds = monitoring.get("monitor_poll_seconds", 120)
+    try:
+        poll_seconds = int(poll_seconds)
+    except (TypeError, ValueError):
+        poll_seconds = 120
+
+    now = time.time()
+    reschedule = False
+    vlm_config = get_vlm_config()
+
+    for task_id, metadata in active_metadata.items():
+        started_at = metadata.get("started_at")
+        if not started_at:
+            continue
+        try:
+            started_at = float(started_at)
+        except (TypeError, ValueError):
+            continue
+
+        elapsed = now - started_at
+        mode = metadata.get("mode", PRIMARY_MODE_STANDARD)
+        profile = _get_timeout_profile(mode)
+        soft = profile["soft_seconds"]
+        hard = profile["hard_seconds"]
+
+        if elapsed >= hard:
+            source_path = metadata.get("source_path")
+            output_dir = metadata.get("output_dir")
+            attempt = int(metadata.get("attempt", 1))
+            logger.warning(
+                "[Audit] Task %s for batch %s exceeded hard timeout (%ss >= %ss). Requeuing or failing.",
+                task_id,
+                batch_id,
+                int(elapsed),
+                hard,
+            )
+            try:
+                celery_app.control.revoke(task_id, terminate=True, signal='SIGKILL')
+            except Exception as revoke_error:
+                logger.warning("[Audit] Failed to revoke task %s: %s", task_id, revoke_error)
+
+            batch_manager.remove_task_metadata(batch_id, task_id)
+
+            fallback_result = None
+            if mode == PRIMARY_MODE_VLM:
+                fallback_result = schedule_standard_fallback(
+                    batch_manager,
+                    source_path,
+                    output_dir,
+                    batch_id,
+                    RuntimeError("hard timeout"),
+                    attempt,
+                    task_id,
+                    vlm_config,
+                )
+            else:
+                fallback_result = schedule_vlm_fallback(
+                    batch_manager,
+                    source_path,
+                    output_dir,
+                    batch_id,
+                    RuntimeError("hard timeout"),
+                    attempt,
+                    task_id,
+                    vlm_config,
+                )
+
+            if fallback_result is None:
+                logger.error(
+                    "[Audit] Task %s failed hard timeout and no fallback scheduled; marking as failure.",
+                    task_id,
+                )
+                _update_batch_state(batch_manager, batch_id, source_path, False)
+
+        else:
+            if elapsed >= soft:
+                logger.warning(
+                    "[Audit] Task %s for batch %s exceeded soft timeout (%ss >= %ss).",
+                    task_id,
+                    batch_id,
+                    int(elapsed),
+                    soft,
+                )
+            reschedule = True
+
+    if reschedule and poll_seconds > 0:
+        logger.info("[Audit] Rescheduling audit for batch %s in %ss", batch_id, poll_seconds)
+        audit_batch_status.apply_async(args=[batch_id], countdown=poll_seconds)

@@ -102,19 +102,23 @@ class TestVlmFallback(unittest.TestCase):
         if hasattr(self, "temp_dir") and os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
-    def test_maybe_schedule_vlm_fallback_disabled(self):
-        from docling_service.tasks import _maybe_schedule_vlm_fallback
+    def test_schedule_vlm_fallback_disabled(self):
+        from docling_service.tasks import schedule_vlm_fallback
 
         mock_config = MagicMock()
-        mock_config.get_section.return_value = {"enabled": False}
+        vlm_cfg = {"enabled": False}
+        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else {}
 
         with patch("docling_service.tasks.get_config", return_value=mock_config):
-            result = _maybe_schedule_vlm_fallback(
+            result = schedule_vlm_fallback(
                 self.batch_manager,
                 "sample.pdf",
                 "out",
                 "batch-1",
                 Exception("fail"),
+                1,
+                "parent",
+                vlm_cfg,
             )
 
         self.assertIsNone(result)
@@ -122,8 +126,8 @@ class TestVlmFallback(unittest.TestCase):
         self.batch_manager.increment_fallback_pending.assert_not_called()
 
     @patch("docling_service.tasks.process_pdf_vlm.apply_async")
-    def test_maybe_schedule_vlm_fallback_enabled(self, mock_apply_async):
-        from docling_service.tasks import _maybe_schedule_vlm_fallback
+    def test_schedule_vlm_fallback_enabled(self, mock_apply_async):
+        from docling_service.tasks import schedule_vlm_fallback
 
         mock_task = MagicMock()
         mock_task.id = "fallback-123"
@@ -132,19 +136,30 @@ class TestVlmFallback(unittest.TestCase):
         self.batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
 
         mock_config = MagicMock()
-        mock_config.get_section.return_value = {
+        monitoring_cfg = {
+            "task_timeout_profiles": {
+                "standard": {"soft_seconds": 600, "hard_seconds": 1200, "max_retries": 1},
+                "vlm": {"soft_seconds": 1800, "hard_seconds": 3600, "max_retries": 1},
+            }
+        }
+        vlm_cfg = {
             "enabled": True,
             "queue_name": "vlm_pdf",
             "primary_mode": "standard",
         }
 
+        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+
         with patch("docling_service.tasks.get_config", return_value=mock_config):
-            result = _maybe_schedule_vlm_fallback(
+            result = schedule_vlm_fallback(
                 self.batch_manager,
                 "sample.pdf",
                 "out",
                 "batch-1",
                 Exception("fail"),
+                1,
+                "parent",
+                vlm_cfg,
             )
 
         self.batch_manager.add_task_to_batch.assert_called_once_with("batch-1", "fallback-123")
@@ -152,12 +167,12 @@ class TestVlmFallback(unittest.TestCase):
         mock_apply_async.assert_called_once()
         self.assertIsNotNone(result)
         self.assertEqual(result["fallback_task_id"], "fallback-123")
-        self.assertEqual(result["fallback_queue"], "vlm_pdf")
+        self.assertEqual(result["fallback_queue"], vlm_cfg["queue_name"])
         self.assertEqual(result.get("status"), "FALLBACK_SCHEDULED")
 
     @patch("docling_service.tasks.process_pdf_standard.apply_async")
-    def test_maybe_schedule_standard_fallback_enabled(self, mock_apply_async):
-        from docling_service.tasks import _maybe_schedule_standard_fallback
+    def test_schedule_standard_fallback_enabled(self, mock_apply_async):
+        from docling_service.tasks import schedule_standard_fallback
 
         mock_task = MagicMock()
         mock_task.id = "standard-456"
@@ -166,19 +181,30 @@ class TestVlmFallback(unittest.TestCase):
         self.batch_manager.get_batch_info.return_value = {"fallback_pending": 2}
 
         mock_config = MagicMock()
-        mock_config.get_section.return_value = {
+        monitoring_cfg = {
+            "task_timeout_profiles": {
+                "standard": {"soft_seconds": 600, "hard_seconds": 1200, "max_retries": 1},
+                "vlm": {"soft_seconds": 1800, "hard_seconds": 3600, "max_retries": 1},
+            }
+        }
+        vlm_cfg = {
             "enabled": True,
             "queue_name": "vlm_pdf",
             "primary_mode": "vlm",
         }
 
+        mock_config.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
+
         with patch("docling_service.tasks.get_config", return_value=mock_config):
-            result = _maybe_schedule_standard_fallback(
+            result = schedule_standard_fallback(
                 self.batch_manager,
                 "sample.pdf",
                 "out",
                 "batch-1",
                 Exception("fail"),
+                1,
+                "parent",
+                vlm_cfg,
             )
 
         self.batch_manager.add_task_to_batch.assert_called_once_with("batch-1", "standard-456")
@@ -208,15 +234,31 @@ class TestVlmFallback(unittest.TestCase):
         mock_apply_async.return_value = mock_task
 
         config_mock = MagicMock()
-        config_mock.get_section.return_value = {
+        monitoring_cfg = {
+            "task_timeout_profiles": {
+                "standard": {"soft_seconds": 600, "hard_seconds": 1200, "max_retries": 1},
+                "vlm": {"soft_seconds": 1800, "hard_seconds": 3600, "max_retries": 1},
+            }
+        }
+        vlm_cfg = {
             "enabled": True,
             "queue_name": "vlm_pdf",
             "primary_mode": "standard",
         }
+        config_mock.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
         mock_get_config.return_value = config_mock
 
         batch_manager = MagicMock()
-        batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
+        batch_manager.get_batch_info.return_value = {
+            "status": "RUNNING",
+            "completed_count": 0,
+            "total_files": 1,
+            "fallback_pending": 1,
+        }
+        batch_manager.increment_completed.return_value = {
+            "completed_count": 0,
+            "total_files": 1,
+        }
         mock_get_batch_manager.return_value = batch_manager
 
         fake_task = SimpleNamespace(request=SimpleNamespace(id="test-task"))
@@ -253,15 +295,31 @@ class TestVlmFallback(unittest.TestCase):
         mock_apply_async.return_value = mock_task
 
         config_mock = MagicMock()
-        config_mock.get_section.return_value = {
+        monitoring_cfg = {
+            "task_timeout_profiles": {
+                "standard": {"soft_seconds": 600, "hard_seconds": 1200, "max_retries": 1},
+                "vlm": {"soft_seconds": 1800, "hard_seconds": 3600, "max_retries": 1},
+            }
+        }
+        vlm_cfg = {
             "enabled": True,
             "queue_name": "vlm_pdf",
             "primary_mode": "vlm",
         }
+        config_mock.get_section.side_effect = lambda section: vlm_cfg if section == "vlm_fallback" else monitoring_cfg if section == "monitoring" else {}
         mock_get_config.return_value = config_mock
 
         batch_manager = MagicMock()
-        batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
+        batch_manager.get_batch_info.return_value = {
+            "status": "RUNNING",
+            "completed_count": 0,
+            "total_files": 1,
+            "fallback_pending": 1,
+        }
+        batch_manager.increment_completed.return_value = {
+            "completed_count": 0,
+            "total_files": 1,
+        }
         mock_get_batch_manager.return_value = batch_manager
 
         fake_task = SimpleNamespace(request=SimpleNamespace(id="test-task"))

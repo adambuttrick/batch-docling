@@ -24,6 +24,9 @@ class BatchManager:
     
     def _get_tasks_key(self, batch_id: str) -> str:
         return f"{self.key_prefix}{batch_id}:tasks"
+
+    def _get_task_meta_key(self, batch_id: str) -> str:
+        return f"{self.key_prefix}{batch_id}:meta"
     
     def create_batch(self, batch_id: str, pdf_files: List[Path]) -> Dict[str, Any]:
         batch_key = self._get_batch_key(batch_id)
@@ -109,15 +112,36 @@ class BatchManager:
     def add_task_to_batch(self, batch_id: str, task_id: str) -> None:
         tasks_key = self._get_tasks_key(batch_id)
         self.redis_client.sadd(tasks_key, task_id)
-    
+
     def get_batch_tasks(self, batch_id: str) -> List[str]:
         tasks_key = self._get_tasks_key(batch_id)
         return list(self.redis_client.smembers(tasks_key))
-    
+
+    def record_task_start(self, batch_id: str, task_id: str, metadata: Dict[str, Any]) -> None:
+        meta_key = self._get_task_meta_key(batch_id)
+        payload = json.dumps(metadata)
+        self.redis_client.hset(meta_key, task_id, payload)
+        self.redis_client.expire(meta_key, 60 * 60 * 24)
+
+    def remove_task_metadata(self, batch_id: str, task_id: str) -> None:
+        meta_key = self._get_task_meta_key(batch_id)
+        self.redis_client.hdel(meta_key, task_id)
+
+    def get_active_task_metadata(self, batch_id: str) -> Dict[str, Dict[str, Any]]:
+        meta_key = self._get_task_meta_key(batch_id)
+        data = self.redis_client.hgetall(meta_key)
+        result: Dict[str, Dict[str, Any]] = {}
+        for task_id, payload in data.items():
+            try:
+                result[task_id] = json.loads(payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return result
+
     def finalize_batch(self, batch_id: str, notes: Optional[str] = None) -> Dict[str, Any]:
         batch_key = self._get_batch_key(batch_id)
         batch_data = self.get_batch_info(batch_id)
-        
+
         if not batch_data:
             raise ValueError(f"Batch {batch_id} not found")
         
