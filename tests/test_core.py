@@ -2,22 +2,28 @@ import os
 import tempfile
 import unittest
 import shutil
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 
+SAMPLE_PDF_DIR = Path("tests/sample_pdfs")
+
+
 class TestSanitizePdf(unittest.TestCase):
     def setUp(self):
-        self.test_small_dir = Path("test_small")
-        self.test_pdfs = list(self.test_small_dir.glob("*.pdf")) if self.test_small_dir.exists() else []
-        if not self.test_pdfs:
-            self.skipTest("No test PDFs found in test_small directory")
+        if not SAMPLE_PDF_DIR.exists():
+            self.skipTest("Sample PDF directory is missing")
+        self.valid_pdf = SAMPLE_PDF_DIR / "valid_text.pdf"
+        self.image_pdf = SAMPLE_PDF_DIR / "image_only.pdf"
+        self.invalid_pdf = SAMPLE_PDF_DIR / "invalid_content.pdf"
+        if not self.valid_pdf.exists() or not self.image_pdf.exists():
+            self.skipTest("Sample PDFs not generated")
     
     def test_sanitize_pdf_valid_file(self):
         from docling_service.tasks import sanitize_pdf
         
-        test_pdf = str(self.test_pdfs[0])
-        sanitized_path, kept_pages, skipped_pages = sanitize_pdf(test_pdf)
+        sanitized_path, kept_pages, skipped_pages = sanitize_pdf(str(self.valid_pdf))
         
         self.assertTrue(os.path.exists(sanitized_path))
         self.assertGreater(kept_pages, 0)
@@ -30,7 +36,7 @@ class TestSanitizePdf(unittest.TestCase):
         from docling_service.tasks import sanitize_pdf
         
         with self.assertRaises(Exception):
-            sanitize_pdf("nonexistent_file.pdf")
+            sanitize_pdf(str(self.invalid_pdf))
     
     @patch('fitz.open')
     def test_sanitize_pdf_no_valid_pages(self, mock_fitz_open):
@@ -51,10 +57,13 @@ class TestSanitizePdf(unittest.TestCase):
 
 class TestProcessPdfLogic(unittest.TestCase):
     def setUp(self):
-        self.test_small_dir = Path("test_small")
-        self.test_pdfs = list(self.test_small_dir.glob("*.pdf")) if self.test_small_dir.exists() else []
-        if not self.test_pdfs:
-            self.skipTest("No test PDFs found in test_small directory")
+        if not SAMPLE_PDF_DIR.exists():
+            self.skipTest("Sample PDF directory is missing")
+        self.valid_pdf = SAMPLE_PDF_DIR / "valid_text.pdf"
+        self.image_pdf = SAMPLE_PDF_DIR / "image_only.pdf"
+        self.invalid_pdf = SAMPLE_PDF_DIR / "invalid_content.pdf"
+        if not self.valid_pdf.exists() or not self.image_pdf.exists():
+            self.skipTest("Sample PDFs not generated")
         self.temp_dir = tempfile.mkdtemp()
     
     def tearDown(self):
@@ -64,11 +73,10 @@ class TestProcessPdfLogic(unittest.TestCase):
     def test_process_pdf_logic_success(self):
         from docling_service.tasks import _process_pdf_logic
         
-        test_pdf = str(self.test_pdfs[0])
-        result = _process_pdf_logic(test_pdf, self.temp_dir, "test_job", "test_task")
-        
+        result = _process_pdf_logic(str(self.valid_pdf), self.temp_dir, "test_job", "test_task")
+
         self.assertEqual(result['status'], 'SUCCESS')
-        self.assertEqual(result['input_file'], test_pdf)
+        self.assertEqual(result['input_file'], str(self.valid_pdf))
         self.assertTrue(os.path.exists(result['output_file']))
         self.assertGreater(result['pages_kept'], 0)
         self.assertGreaterEqual(result['pages_skipped'], 0)
@@ -77,7 +85,118 @@ class TestProcessPdfLogic(unittest.TestCase):
         from docling_service.tasks import _process_pdf_logic
         
         with self.assertRaises(Exception):
-            _process_pdf_logic("nonexistent.pdf", self.temp_dir, "test_job", "test_task")
+            _process_pdf_logic(str(self.invalid_pdf), self.temp_dir, "test_job", "test_task")
+
+
+class TestVlmFallback(unittest.TestCase):
+    def setUp(self):
+        self.batch_manager = MagicMock()
+        if not SAMPLE_PDF_DIR.exists():
+            self.skipTest("Sample PDF directory is missing")
+        self.image_pdf = SAMPLE_PDF_DIR / "image_only.pdf"
+        if not self.image_pdf.exists():
+            self.skipTest("Image-only sample PDF missing")
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        if hasattr(self, "temp_dir") and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_maybe_schedule_vlm_fallback_disabled(self):
+        from docling_service.tasks import _maybe_schedule_vlm_fallback
+
+        mock_config = MagicMock()
+        mock_config.get_section.return_value = {"enabled": False}
+
+        with patch("docling_service.tasks.get_config", return_value=mock_config):
+            result = _maybe_schedule_vlm_fallback(
+                self.batch_manager,
+                "sample.pdf",
+                "out",
+                "batch-1",
+                Exception("fail"),
+            )
+
+        self.assertIsNone(result)
+        self.batch_manager.add_task_to_batch.assert_not_called()
+        self.batch_manager.increment_fallback_pending.assert_not_called()
+
+    @patch("docling_service.tasks.process_pdf_vlm.apply_async")
+    def test_maybe_schedule_vlm_fallback_enabled(self, mock_apply_async):
+        from docling_service.tasks import _maybe_schedule_vlm_fallback
+
+        mock_task = MagicMock()
+        mock_task.id = "fallback-123"
+        mock_apply_async.return_value = mock_task
+
+        self.batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
+
+        mock_config = MagicMock()
+        mock_config.get_section.return_value = {
+            "enabled": True,
+            "queue_name": "vlm_pdf",
+        }
+
+        with patch("docling_service.tasks.get_config", return_value=mock_config):
+            result = _maybe_schedule_vlm_fallback(
+                self.batch_manager,
+                "sample.pdf",
+                "out",
+                "batch-1",
+                Exception("fail"),
+            )
+
+        self.batch_manager.add_task_to_batch.assert_called_once_with("batch-1", "fallback-123")
+        self.batch_manager.increment_fallback_pending.assert_called_once_with("batch-1")
+        mock_apply_async.assert_called_once()
+        self.assertIsNotNone(result)
+        self.assertEqual(result["fallback_task_id"], "fallback-123")
+        self.assertEqual(result["fallback_queue"], "vlm_pdf")
+        self.assertEqual(result.get("status"), "FALLBACK_SCHEDULED")
+
+    @patch("docling_service.tasks.process_pdf_vlm.apply_async")
+    @patch("docling_service.tasks.get_config")
+    @patch("docling_service.tasks.get_batch_manager")
+    @patch("docling_service.tasks._process_pdf_logic")
+    def test_process_pdf_triggers_fallback_for_image_pdf(
+        self,
+        mock_process_logic,
+        mock_get_batch_manager,
+        mock_get_config,
+        mock_apply_async,
+    ):
+        from docling_service.tasks import process_pdf
+
+        mock_process_logic.side_effect = Exception("conversion failed")
+        mock_task = MagicMock()
+        mock_task.id = "vlm-task"
+        mock_apply_async.return_value = mock_task
+
+        config_mock = MagicMock()
+        config_mock.get_section.return_value = {
+            "enabled": True,
+            "queue_name": "vlm_pdf",
+        }
+        mock_get_config.return_value = config_mock
+
+        batch_manager = MagicMock()
+        batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
+        mock_get_batch_manager.return_value = batch_manager
+
+        fake_task = SimpleNamespace(request=SimpleNamespace(id="test-task"))
+
+        result = process_pdf.__wrapped__.__func__(
+            fake_task,
+            source_path=str(self.image_pdf),
+            output_dir=self.temp_dir,
+            batch_id="batch-123",
+        )
+
+        mock_process_logic.assert_called_once()
+        mock_apply_async.assert_called_once()
+        batch_manager.add_task_to_batch.assert_called_once_with("batch-123", "vlm-task")
+        batch_manager.increment_fallback_pending.assert_called_once_with("batch-123")
+        self.assertEqual(result["status"], "FALLBACK_SCHEDULED")
 
 
 class TestRegressionDetection(unittest.TestCase):
@@ -120,6 +239,7 @@ def run_core_tests():
     test_classes = [
         TestSanitizePdf,
         TestProcessPdfLogic,
+        TestVlmFallback,
         TestRegressionDetection
     ]
     

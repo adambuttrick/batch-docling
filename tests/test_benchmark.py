@@ -4,20 +4,20 @@ from pathlib import Path
 
 class TestBenchmarkFunctionality(unittest.TestCase):
     def setUp(self):
-        self.test_small_dir = Path("test_small")
-        if not self.test_small_dir.exists() or not list(self.test_small_dir.glob("*.pdf")):
-            self.skipTest("No test PDFs found in test_small directory")
+        self.sample_dir = Path("tests/sample_pdfs")
+        if not self.sample_dir.exists() or not list(self.sample_dir.glob("*.pdf")):
+            self.skipTest("No sample PDFs available")
     
     def test_benchmark_runner_initialization(self):
         from benchmarks.benchmark import BenchmarkRunner
         
-        runner = BenchmarkRunner(test_dir="test_small")
+        runner = BenchmarkRunner(test_dir="tests/sample_pdfs")
         self.assertGreater(len(runner.test_pdfs), 0)
     
     def test_benchmark_sanitize_pdf(self):
         from benchmarks.benchmark import BenchmarkRunner
         
-        runner = BenchmarkRunner(test_dir="test_small")
+        runner = BenchmarkRunner(test_dir="tests/sample_pdfs")
         if not runner.test_pdfs:
             self.skipTest("No test PDFs found")
         
@@ -28,7 +28,7 @@ class TestBenchmarkFunctionality(unittest.TestCase):
     def test_benchmark_process_pdf(self):
         from benchmarks.benchmark import BenchmarkRunner
         
-        runner = BenchmarkRunner(test_dir="test_small")
+        runner = BenchmarkRunner(test_dir="tests/sample_pdfs")
         if not runner.test_pdfs:
             self.skipTest("No test PDFs found")
         
@@ -39,7 +39,7 @@ class TestBenchmarkFunctionality(unittest.TestCase):
     def test_run_benchmarks(self):
         from benchmarks.benchmark import BenchmarkRunner
         
-        runner = BenchmarkRunner(test_dir="test_small")
+        runner = BenchmarkRunner(test_dir="tests/sample_pdfs")
         results = runner.run_benchmarks()
         
         self.assertIn('sanitize_pdf', results)

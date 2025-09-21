@@ -48,7 +48,8 @@ class AppController:
                 "batch_id": batch_id,
                 "total_files": len(pdf_files),
                 "status": BatchStates.RUNNING,
-                "output_dir": output_dir
+                "output_dir": output_dir,
+                "fallback_pending": batch_info.get("fallback_pending", 0)
             }
 
         except Exception as e:
@@ -138,7 +139,8 @@ class AppController:
             "failures": batch_info["failure_count"],
             "progress_percent": progress["progress_percent"],
             "elapsed_time": progress.get("elapsed_time"),
-            "notes": batch_info.get("notes")
+            "notes": batch_info.get("notes"),
+            "fallback_pending": batch_info.get("fallback_pending", 0)
         }
 
     def schedule_batch_audit(self, batch_id: str, delay_seconds: int) -> str:

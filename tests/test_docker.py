@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import redis
 import tempfile
@@ -6,7 +5,6 @@ from pathlib import Path
 from docling_service.config import get_config
 
 def test_redis_connection():
-    """Test Redis connectivity using configuration."""
     try:
         config = get_config()
         redis_url = config.get_redis_url()
@@ -19,7 +17,6 @@ def test_redis_connection():
         return False
 
 def test_directories():
-    """Test directory configuration."""
     try:
         config = get_config()
         output_dir = config.get_default_output_dir()
@@ -37,7 +34,6 @@ def test_directories():
         return False
 
 def test_celery_import():
-    """Test Celery app import."""
     try:
         from docling_service.celery_app import celery_app
         print(f"✓ Celery app imported successfully")

@@ -1,0 +1,66 @@
+{
+  "sanitize_pdf": {
+    "0803.3087v1.pdf": {
+      "status": "success",
+      "execution_time": 0.014042167000297923,
+      "total_pages": 7,
+      "kept_pages": 7,
+      "skipped_pages": 0,
+      "pages_per_second": 498.4985579399167,
+      "time_per_page": 0.0020060238571854177,
+      "memory_delta": 6.296875
+    },
+    "0902.1227v2.pdf": {
+      "status": "success",
+      "execution_time": 0.08575725000264356,
+      "total_pages": 51,
+      "kept_pages": 51,
+      "skipped_pages": 0,
+      "pages_per_second": 594.7019056514507,
+      "time_per_page": 0.0016815147059341875,
+      "memory_delta": 8.34375
+    },
+    "0811.2010v1.pdf": {
+      "status": "success",
+      "execution_time": 0.054782333005277906,
+      "total_pages": 7,
+      "kept_pages": 7,
+      "skipped_pages": 0,
+      "pages_per_second": 127.77842081544058,
+      "time_per_page": 0.007826047572182557,
+      "memory_delta": 5.390625
+    }
+  },
+  "process_pdf": {
+    "0803.3087v1.pdf": {
+      "status": "success",
+      "execution_time": 2.6409340420068474,
+      "total_pages": 7,
+      "kept_pages": 7,
+      "skipped_pages": 0,
+      "pages_per_second": 2.650577367195697,
+      "time_per_page": 0.37727629171526395,
+      "memory_delta": 359.34375
+    },
+    "0902.1227v2.pdf": {
+      "status": "success",
+      "execution_time": 10.840257707997807,
+      "total_pages": 51,
+      "kept_pages": 51,
+      "skipped_pages": 0,
+      "pages_per_second": 4.704685199722958,
+      "time_per_page": 0.21255407270583937,
+      "memory_delta": 439.484375
+    },
+    "0811.2010v1.pdf": {
+      "status": "success",
+      "execution_time": 2.640184000003501,
+      "total_pages": 7,
+      "kept_pages": 7,
+      "skipped_pages": 0,
+      "pages_per_second": 2.6513303618197512,
+      "time_per_page": 0.37716914285764297,
+      "memory_delta": 11.359375
+    }
+  }
+}

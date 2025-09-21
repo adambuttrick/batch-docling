@@ -55,6 +55,10 @@ docker-compose up -d
 
 Config is loaded from `config.yaml` with environment variable overrides.
 
+## VLM Fallback
+
+If `vlm_fallback.enabled` is set to `true` in your config, failed PDF conversions are re-queued onto a dedicated Celery worker that executes Docling's VLM pipeline with the Granit Dolcing models. The worker listens on `vlm_fallback.queue_name` with a default of `vlm_pdf`) and should be started separately because VLM jobs are slower and often require different hardware. Batch progress tracking now keeps pending VLM retries visible via the `fallback_pending` counter.
+
 ## Environment Variables
 
 - `REDIS_URL`: Redis connection URL
@@ -63,6 +67,11 @@ Config is loaded from `config.yaml` with environment variable overrides.
 - `WORKER_MAX_TASKS_PER_CHILD`: Max tasks per worker process
 - `WORKER_PREFETCH_MULTIPLIER`: Task prefetch multiplier
 - `AUDIT_DELAY_SECONDS`: Delay for audit tasks
+- `VLM_FALLBACK_ENABLED`: Enable VLM-based retry path for failed PDFs
+- `VLM_QUEUE_NAME`: Celery queue name used by the VLM worker
+- `VLM_FALLBACK_MODEL`: Model spec to load (e.g. `GRANITE_VISION_TRANSFORMERS`)
+- `VLM_WORKER_CONCURRENCY`: Concurrency for the VLM worker processes
+- `VLM_ARTIFACTS_PATH`: Optional local path with pre-downloaded models
 
 ## Example config.yaml
 
@@ -74,5 +83,10 @@ celery:
   task_soft_time_limit: 300
   task_time_limit: 600
   worker_max_tasks_per_child: 100
-```
 
+vlm_fallback:
+  enabled: true
+  queue_name: "vlm_pdf"
+  model: "GRANITE_VISION_TRANSFORMERS"
+  worker_concurrency: 1
+```
