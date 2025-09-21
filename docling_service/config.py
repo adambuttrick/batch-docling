@@ -71,6 +71,7 @@ class Config:
             "VLM_GENERATE_PAGE_IMAGES": ("vlm_fallback", "generate_page_images"),
             "VLM_GENERATE_PICTURE_IMAGES": ("vlm_fallback", "generate_picture_images"),
             "VLM_WORKER_CONCURRENCY": ("vlm_fallback", "worker_concurrency"),
+            "VLM_PRIMARY_MODE": ("vlm_fallback", "primary_mode"),
         }
 
         for env_var, (section, key) in env_mappings.items():

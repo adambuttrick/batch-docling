@@ -19,6 +19,9 @@ from .config import get_config
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+PRIMARY_MODE_STANDARD = "standard"
+PRIMARY_MODE_VLM = "vlm"
+
 
 def sanitize_pdf(source_path: str) -> (str, int, int):
     kept_pages = 0
@@ -126,8 +129,7 @@ def _resolve_vlm_model_option(model_name: Optional[str]):
 
 
 def _build_vlm_pipeline_options() -> VlmPipelineOptions:
-    config = get_config()
-    vlm_config: Dict[str, Any] = config.get_section("vlm_fallback") or {}
+    vlm_config = _get_vlm_config()
 
     pipeline_options = VlmPipelineOptions(
         enable_remote_services=vlm_config.get("enable_remote_services", False),
@@ -157,6 +159,23 @@ def _get_vlm_pipeline_cls():
     from docling.pipeline.vlm_pipeline import VlmPipeline
 
     return VlmPipeline
+
+
+def _get_vlm_config() -> Dict[str, Any]:
+    config = get_config()
+    return config.get_section("vlm_fallback") or {}
+
+
+def _get_primary_mode(vlm_config: Dict[str, Any]) -> str:
+    mode = (vlm_config.get("primary_mode") or PRIMARY_MODE_STANDARD).strip().lower()
+    if mode not in {PRIMARY_MODE_STANDARD, PRIMARY_MODE_VLM}:
+        logger.warning("Unknown primary mode '%s'; defaulting to '%s'", mode, PRIMARY_MODE_STANDARD)
+        return PRIMARY_MODE_STANDARD
+    return mode
+
+
+def _is_fallback_enabled(vlm_config: Dict[str, Any]) -> bool:
+    return bool(vlm_config.get("enabled", False))
 
 
 def _process_pdf_logic(
@@ -245,10 +264,9 @@ def _maybe_schedule_vlm_fallback(
     batch_id: str,
     error: Exception,
 ) -> Optional[Dict[str, Any]]:
-    config = get_config()
-    vlm_config: Dict[str, Any] = config.get_section("vlm_fallback") or {}
+    vlm_config = _get_vlm_config()
 
-    if not vlm_config.get("enabled", False):
+    if not _is_fallback_enabled(vlm_config):
         return None
 
     queue_name = vlm_config.get("queue_name", "vlm_pdf")
@@ -290,12 +308,67 @@ def _maybe_schedule_vlm_fallback(
     }
 
 
+def _maybe_schedule_standard_fallback(
+    batch_manager,
+    source_path: str,
+    output_dir: str,
+    batch_id: str,
+    error: Exception,
+) -> Optional[Dict[str, Any]]:
+    vlm_config = _get_vlm_config()
+
+    if not _is_fallback_enabled(vlm_config):
+        return None
+
+    try:
+        fallback_task = process_pdf_standard.apply_async(
+            args=[source_path, output_dir, batch_id]
+        )
+    except Exception as dispatch_error:
+        logger.error(
+            "Unable to schedule standard fallback for %s: %s",
+            source_path,
+            dispatch_error,
+            exc_info=True,
+        )
+        return None
+
+    batch_manager.add_task_to_batch(batch_id, fallback_task.id)
+    batch_manager.increment_fallback_pending(batch_id)
+
+    batch_info = batch_manager.get_batch_info(batch_id) or {}
+    fallback_pending = batch_info.get("fallback_pending", 0)
+
+    logger.info(
+        "Scheduled standard fallback task %s for %s on default queue",
+        fallback_task.id,
+        source_path,
+    )
+
+    return {
+        "status": "FALLBACK_SCHEDULED",
+        "input_file": source_path,
+        "original_error": str(error),
+        "fallback_task_id": fallback_task.id,
+        "fallback_queue": "celery",
+        "fallback_pending": fallback_pending,
+    }
+
+
 @celery_app.task(name='tasks.process_pdf', bind=True)
 def process_pdf(self, source_path: str, output_dir: str, batch_id: str):
     batch_manager = get_batch_manager()
+    vlm_config = _get_vlm_config()
+    primary_mode = _get_primary_mode(vlm_config)
+    use_vlm_primary = primary_mode == PRIMARY_MODE_VLM
     try:
         result = _process_pdf_logic(
-            source_path, output_dir, batch_id, self.request.id)
+            source_path,
+            output_dir,
+            batch_id,
+            self.request.id,
+            use_vlm=use_vlm_primary,
+        )
         _update_batch_state(batch_manager, batch_id, source_path, True)
         return result
     except Exception as e:
@@ -305,13 +378,24 @@ def process_pdf(self, source_path: str, output_dir: str, batch_id: str):
             e,
             exc_info=True,
         )
-        fallback_result = _maybe_schedule_vlm_fallback(
-            batch_manager=batch_manager,
-            source_path=source_path,
-            output_dir=output_dir,
-            batch_id=batch_id,
-            error=e,
-        )
+        fallback_result = None
+
+        if use_vlm_primary:
+            fallback_result = _maybe_schedule_standard_fallback(
+                batch_manager=batch_manager,
+                source_path=source_path,
+                output_dir=output_dir,
+                batch_id=batch_id,
+                error=e,
+            )
+        else:
+            fallback_result = _maybe_schedule_vlm_fallback(
+                batch_manager=batch_manager,
+                source_path=source_path,
+                output_dir=output_dir,
+                batch_id=batch_id,
+                error=e,
+            )
 
         if fallback_result is not None:
             return fallback_result
@@ -337,6 +421,32 @@ def process_pdf_vlm(self, source_path: str, output_dir: str, batch_id: str):
     except Exception as e:
         logger.error(
             "VLM fallback failed for %s: %s",
+            source_path,
+            e,
+            exc_info=True,
+        )
+        batch_manager.decrement_fallback_pending(batch_id)
+        _update_batch_state(batch_manager, batch_id, source_path, False)
+        raise
+
+
+@celery_app.task(name='tasks.process_pdf_standard', bind=True)
+def process_pdf_standard(self, source_path: str, output_dir: str, batch_id: str):
+    batch_manager = get_batch_manager()
+    try:
+        result = _process_pdf_logic(
+            source_path,
+            output_dir,
+            batch_id,
+            self.request.id,
+            use_vlm=False,
+        )
+        batch_manager.decrement_fallback_pending(batch_id)
+        _update_batch_state(batch_manager, batch_id, source_path, True)
+        return result
+    except Exception as e:
+        logger.error(
+            "Standard fallback failed for %s: %s",
             source_path,
             e,
             exc_info=True,

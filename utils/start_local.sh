@@ -33,12 +33,13 @@ vlm_cfg = cfg.get_section("vlm_fallback") or {}
 enabled = int(bool(vlm_cfg.get("enabled", False)))
 queue_name = vlm_cfg.get("queue_name", "vlm_pdf")
 concurrency = int(vlm_cfg.get("worker_concurrency", 1) or 1)
-print(f"{enabled}:{queue_name}:{concurrency}")
+primary_mode = (vlm_cfg.get("primary_mode") or "standard").strip().lower()
+print(f"{enabled}:{queue_name}:{concurrency}:{primary_mode}")
 PY
 )
 
 OLD_IFS="$IFS"
-IFS=':' read -r VLM_ENABLED_INT VLM_QUEUE_NAME VLM_CONCURRENCY <<< "$VLM_SETTINGS"
+IFS=':' read -r VLM_ENABLED_INT VLM_QUEUE_NAME VLM_CONCURRENCY VLM_PRIMARY_MODE <<< "$VLM_SETTINGS"
 IFS="$OLD_IFS"
 
 # Start Redis if not running
@@ -75,7 +76,7 @@ else
     exit 1
 fi
 
-if [ "$VLM_ENABLED_INT" -eq 1 ]; then
+if [ "$VLM_ENABLED_INT" -eq 1 ] && [ "$VLM_PRIMARY_MODE" != "vlm" ]; then
     echo "Starting VLM Celery worker (queue=${VLM_QUEUE_NAME}, concurrency=${VLM_CONCURRENCY})..."
     celery -A docling_service.celery_app worker --loglevel=info --concurrency="${VLM_CONCURRENCY}" -Q "${VLM_QUEUE_NAME}" --detach
     sleep 3

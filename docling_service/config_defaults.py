@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "queue_name": "vlm_pdf",
         "model": "GRANITE_VISION_TRANSFORMERS",
+        "primary_mode": "standard",
         "artifacts_path": None,
         "enable_remote_services": False,
         "force_backend_text": False,

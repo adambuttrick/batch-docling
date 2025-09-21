@@ -47,6 +47,7 @@ vlm_fallback:
   enabled: false
   queue_name: vlm_pdf
   model: GRANITE_VISION_TRANSFORMERS
+  primary_mode: standard
   worker_concurrency: 1
   enable_remote_services: false
   force_backend_text: false

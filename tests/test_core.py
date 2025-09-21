@@ -135,6 +135,7 @@ class TestVlmFallback(unittest.TestCase):
         mock_config.get_section.return_value = {
             "enabled": True,
             "queue_name": "vlm_pdf",
+            "primary_mode": "standard",
         }
 
         with patch("docling_service.tasks.get_config", return_value=mock_config):
@@ -154,11 +155,45 @@ class TestVlmFallback(unittest.TestCase):
         self.assertEqual(result["fallback_queue"], "vlm_pdf")
         self.assertEqual(result.get("status"), "FALLBACK_SCHEDULED")
 
+    @patch("docling_service.tasks.process_pdf_standard.apply_async")
+    def test_maybe_schedule_standard_fallback_enabled(self, mock_apply_async):
+        from docling_service.tasks import _maybe_schedule_standard_fallback
+
+        mock_task = MagicMock()
+        mock_task.id = "standard-456"
+        mock_apply_async.return_value = mock_task
+
+        self.batch_manager.get_batch_info.return_value = {"fallback_pending": 2}
+
+        mock_config = MagicMock()
+        mock_config.get_section.return_value = {
+            "enabled": True,
+            "queue_name": "vlm_pdf",
+            "primary_mode": "vlm",
+        }
+
+        with patch("docling_service.tasks.get_config", return_value=mock_config):
+            result = _maybe_schedule_standard_fallback(
+                self.batch_manager,
+                "sample.pdf",
+                "out",
+                "batch-1",
+                Exception("fail"),
+            )
+
+        self.batch_manager.add_task_to_batch.assert_called_once_with("batch-1", "standard-456")
+        self.batch_manager.increment_fallback_pending.assert_called_once_with("batch-1")
+        mock_apply_async.assert_called_once()
+        self.assertIsNotNone(result)
+        self.assertEqual(result["fallback_task_id"], "standard-456")
+        self.assertEqual(result["fallback_queue"], "celery")
+        self.assertEqual(result.get("status"), "FALLBACK_SCHEDULED")
+
     @patch("docling_service.tasks.process_pdf_vlm.apply_async")
     @patch("docling_service.tasks.get_config")
     @patch("docling_service.tasks.get_batch_manager")
     @patch("docling_service.tasks._process_pdf_logic")
-    def test_process_pdf_triggers_fallback_for_image_pdf(
+    def test_process_pdf_triggers_vlm_fallback_in_standard_mode(
         self,
         mock_process_logic,
         mock_get_batch_manager,
@@ -176,6 +211,7 @@ class TestVlmFallback(unittest.TestCase):
         config_mock.get_section.return_value = {
             "enabled": True,
             "queue_name": "vlm_pdf",
+            "primary_mode": "standard",
         }
         mock_get_config.return_value = config_mock
 
@@ -195,6 +231,51 @@ class TestVlmFallback(unittest.TestCase):
         mock_process_logic.assert_called_once()
         mock_apply_async.assert_called_once()
         batch_manager.add_task_to_batch.assert_called_once_with("batch-123", "vlm-task")
+        batch_manager.increment_fallback_pending.assert_called_once_with("batch-123")
+        self.assertEqual(result["status"], "FALLBACK_SCHEDULED")
+
+    @patch("docling_service.tasks.process_pdf_standard.apply_async")
+    @patch("docling_service.tasks.get_config")
+    @patch("docling_service.tasks.get_batch_manager")
+    @patch("docling_service.tasks._process_pdf_logic")
+    def test_process_pdf_vlm_mode_falls_back_to_standard(
+        self,
+        mock_process_logic,
+        mock_get_batch_manager,
+        mock_get_config,
+        mock_apply_async,
+    ):
+        from docling_service.tasks import process_pdf
+
+        mock_process_logic.side_effect = Exception("conversion failed")
+        mock_task = MagicMock()
+        mock_task.id = "standard-task"
+        mock_apply_async.return_value = mock_task
+
+        config_mock = MagicMock()
+        config_mock.get_section.return_value = {
+            "enabled": True,
+            "queue_name": "vlm_pdf",
+            "primary_mode": "vlm",
+        }
+        mock_get_config.return_value = config_mock
+
+        batch_manager = MagicMock()
+        batch_manager.get_batch_info.return_value = {"fallback_pending": 1}
+        mock_get_batch_manager.return_value = batch_manager
+
+        fake_task = SimpleNamespace(request=SimpleNamespace(id="test-task"))
+
+        result = process_pdf.__wrapped__.__func__(
+            fake_task,
+            source_path=str(self.image_pdf),
+            output_dir=self.temp_dir,
+            batch_id="batch-123",
+        )
+
+        mock_process_logic.assert_called_once()
+        mock_apply_async.assert_called_once()
+        batch_manager.add_task_to_batch.assert_called_once_with("batch-123", "standard-task")
         batch_manager.increment_fallback_pending.assert_called_once_with("batch-123")
         self.assertEqual(result["status"], "FALLBACK_SCHEDULED")
 

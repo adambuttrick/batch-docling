@@ -57,7 +57,12 @@ Config is loaded from `config.yaml` with environment variable overrides.
 
 ## VLM Fallback
 
-If `vlm_fallback.enabled` is set to `true` in your config, failed PDF conversions are re-queued onto a dedicated Celery worker that executes Docling's VLM pipeline with the Granit Dolcing models. The worker listens on `vlm_fallback.queue_name` with a default of `vlm_pdf`) and should be started separately because VLM jobs are slower and often require different hardware. Batch progress tracking now keeps pending VLM retries visible via the `fallback_pending` counter.
+When `vlm_fallback.enabled` is `true`, conversions run according to `vlm_fallback.primary_mode`:
+
+- `standard` (default): start with the standard Docling pipeline; failures are re-queued onto a dedicated worker that executes Granite Vision VLM conversions.
+- `vlm`: invert the flow—Granite Vision handles the primary attempt on the main queue and the standard pipeline is invoked as a fallback task if the VLM conversion fails.
+
+The fallback worker listens on `vlm_fallback.queue_name` (default `vlm_pdf`) and should be started separately when the primary mode is `standard`, because VLM jobs are slower and often require different hardware. Batch progress tracking keeps pending fallbacks visible via the `fallback_pending` counter in Redis.
 
 ## Environment Variables
 
@@ -72,6 +77,7 @@ If `vlm_fallback.enabled` is set to `true` in your config, failed PDF conversion
 - `VLM_FALLBACK_MODEL`: Model spec to load (e.g. `GRANITE_VISION_TRANSFORMERS`)
 - `VLM_WORKER_CONCURRENCY`: Concurrency for the VLM worker processes
 - `VLM_ARTIFACTS_PATH`: Optional local path with pre-downloaded models
+- `VLM_PRIMARY_MODE`: `standard` or `vlm` to control which pipeline runs first
 
 ## Example config.yaml
 
@@ -88,5 +94,6 @@ vlm_fallback:
   enabled: true
   queue_name: "vlm_pdf"
   model: "GRANITE_VISION_TRANSFORMERS"
+  primary_mode: standard
   worker_concurrency: 1
 ```
