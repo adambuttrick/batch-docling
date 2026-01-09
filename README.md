@@ -57,7 +57,7 @@ Config is loaded from `config.yaml` with environment variable overrides.
 
 ## VLM Fallback
 
-If `vlm_fallback.enabled` is set to `true` in your config, failed PDF conversions are re-queued onto a dedicated Celery worker that executes Docling's VLM pipeline with the Granit Dolcing models. The worker listens on `vlm_fallback.queue_name` with a default of `vlm_pdf`) and should be started separately because VLM jobs are slower and often require different hardware. Batch progress tracking now keeps pending VLM retries visible via the `fallback_pending` counter.
+If `vlm_fallback.enabled` is set to `true` in your config, failed PDF conversions are re-queued onto a dedicated Celery worker that executes Docling's VLM pipeline with the Granite Docling models. The worker listens on `vlm_fallback.queue_name` with a default of `vlm_pdf`) and should be started separately because VLM jobs are slower and often require different hardware. Batch progress tracking now keeps pending VLM retries visible via the `fallback_pending` counter.
 
 ## Environment Variables
 
